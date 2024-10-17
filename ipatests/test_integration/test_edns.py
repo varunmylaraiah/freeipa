@@ -9,6 +9,7 @@ import textwrap
 from ipatests.pytest_ipa.integration import tasks
 from ipatests.test_integration.base import IntegrationTest
 from ipatests.pytest_ipa.integration.firewall import Firewall
+from pytest_sourceorder import ordered
 
 
 def pre_enable_dnsovertls(host, master_ip):
@@ -22,6 +23,7 @@ def pre_enable_dnsovertls(host, master_ip):
                       "--set-dnsovertls=yes", "--interface=eth0"])
 
 
+@ordered
 class TestDNSOverTLS(IntegrationTest):
     """Tests for DNS over TLS feature."""
 
@@ -67,6 +69,19 @@ class TestDNSOverTLS(IntegrationTest):
         res = tasks.install_master(self.master, extra_args=args,
                                    raiseonerr=False)
         assert "Not a valid CA certificate: " in res.stderr_text
+        tasks.uninstall_master(self.master)
+
+    def test_install_dnsovertls_without_setup_dns_master(self):
+        """
+        This test installs an IPA server using the --dns-over-tls option without using setup-dns option, and captures warnings that appear.
+        """
+        self.master.run_command(["ipa-server-install", "--uninstall", "-U"])
+        args = [
+            "--dns-over-tls",
+        ]
+        res = tasks.install_master(
+            self.master, extra_args=args, setup_dns=False)
+        assert "Warning: --dns-over-tls option specified without --setup-dns, ignoring" in res.stdout_text
         tasks.uninstall_master(self.master)
 
     def test_install_dnsovertls_master(self):
@@ -178,3 +193,68 @@ class TestDNSOverTLS(IntegrationTest):
         self.test_install_dnsovertls_client()
         self.test_install_dnsovertls_replica()
         self.test_queries_encrypted()
+
+    def test_install_dnsovertls_with_invalid_ipaddress_master(self):
+        """
+        This test installs an IPA server using the --dns-over-tls option with an invalid IP address.
+        """
+        args = [
+            "--dns-over-tls",
+            "--dot-forwarder", "198.168.0.0.1#example-dns.test",
+        ]
+        res = tasks.install_master(self.master, extra_args=args,
+                                   raiseonerr=False)
+        assert "--dot-forwarder invalid: DoT forwarder must be in the format of '1.2.3.4#dns.example.test'" in res.stderr_text
+
+    def test_install_dnsovertls_with_invalid_ipaddress_replica(self):
+        """
+        This tests installs IPA replica with --dns-over-tls option with an invalid IP address.
+        """
+        res = self.replicas[0].run_command(['ipa-replica-install', '--dns-over-tls',
+                                            '--dot-forwarder', '"198.168.0.0.1#example-dns.test"',
+                                            '-w', self.master.config.admin_password,
+                                            '-n', self.master.domain.name,
+                                            '-r', self.master.domain.realm,
+                                            '--server', self.master.hostname,
+                                            '-U'], raiseonerr=False)
+        assert "--dot-forwarder invalid: DoT forwarder must be in the format of '1.2.3.4#dns.example.test'" in res.stderr_text
+
+    def test_validate_DoT_options_master(self):
+        """
+        Tests that DoT options are displayed correctly on master.
+        """
+        cmdout = self.master.run_command(
+            ['ipa-server-install', '--help'])
+        assert '''--dot-forwarder=DOT_FORWARDERS
+                        Add a DNS over TLS forwarder. This option can be used
+                        multiple times''' in cmdout.stdout_text
+        assert '''--dns-over-tls-cert=DNS_OVER_TLS_CERT
+                        Certificate to use for DNS over TLS. If empty, a new
+                        certificate will be requested from IPA CA''' in cmdout.stdout_text
+        assert '''--dns-over-tls-key=DNS_OVER_TLS_KEY
+                        Key for certificate specified in --dns-over-tls-cert''' in cmdout.stdout_text
+        assert '''--dns-over-tls      Configure DNS over TLS''' in cmdout.stdout_text
+
+    def test_validate_DoT_options_replica(self):
+        """
+        Tests that DoT options are displayed correctly on replica.
+        """
+        cmdout = self.replicas[0].run_command(
+            ['ipa-server-install', '--help'])
+        assert '''--dot-forwarder=DOT_FORWARDERS
+                        Add a DNS over TLS forwarder. This option can be used
+                        multiple times''' in cmdout.stdout_text
+        assert '''--dns-over-tls-cert=DNS_OVER_TLS_CERT
+                        Certificate to use for DNS over TLS. If empty, a new
+                        certificate will be requested from IPA CA''' in cmdout.stdout_text
+        assert '''--dns-over-tls-key=DNS_OVER_TLS_KEY
+                        Key for certificate specified in --dns-over-tls-cert''' in cmdout.stdout_text
+        assert '''--dns-over-tls      Configure DNS over TLS''' in cmdout.stdout_text
+
+    def test_validate_DoT_options_client(self):
+        """
+        Tests that DoT options are displayed correctly on client.
+        """
+        cmdout = self.clients[0].run_command(
+            ['ipa-client-install', '--help'])
+        assert '''--dns-over-tls      Configure DNS over TLS''' in cmdout.stdout_text
